@@ -1,0 +1,46 @@
+{
+  "download_path": {
+    "description": "漫画下载存储路径（留空则使用 AstrBot 数据目录下的 plugin_data/astrbot_plugin_jmcomic/）",
+    "type": "string",
+    "default": "",
+    "hint": "绝对路径，如 D:/comics 或 /home/user/comics。留空使用默认路径。"
+  },
+  "max_cache": {
+    "description": "最大缓存漫画数量",
+    "type": "int",
+    "default": 5,
+    "hint": "超出数量时自动清理最早下载的漫画。"
+  },
+  "max_pages": {
+    "description": "单次下载最大页数限制",
+    "type": "int",
+    "default": 50,
+    "hint": "漫画总页数超过此值将拒绝下载，防止下载过大的漫画。"
+  },
+  "default_format": {
+    "description": "默认导出格式",
+    "type": "string",
+    "default": "ask",
+    "options": ["ask", "pdf", "zip"],
+    "hint": "pdf=始终导出PDF，zip=始终导出ZIP，ask=每次询问用户选择。"
+  },
+  "proxy": {
+    "description": "HTTP 代理地址",
+    "type": "string",
+    "default": "",
+    "hint": "格式如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080。留空则不使用代理。"
+  },
+  "image_suffix": {
+    "description": "强制图片输出格式",
+    "type": "string",
+    "default": "",
+    "options": ["", ".jpg", ".webp", ".png"],
+    "hint": "留空保持原始格式。设置后所有图片统一转换为该格式。"
+  },
+  "image_decode": {
+    "description": "是否解密/反混淆图片",
+    "type": "bool",
+    "default": true,
+    "hint": "JMComic 图片经过服务端加密混淆，通常需要开启此选项。关闭则下载原始加密图片。"
+  }
+}

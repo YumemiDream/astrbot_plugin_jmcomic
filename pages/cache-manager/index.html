@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>JMComic 缓存管理</title>
+  <style>
+    :root {
+      --bg: #f5f5f5;
+      --card-bg: #ffffff;
+      --text: #1a1a1a;
+      --text-sub: #666;
+      --border: #e0e0e0;
+      --accent: #4a90d9;
+      --accent-hover: #357abd;
+      --danger: #e74c3c;
+      --danger-hover: #c0392b;
+      --success: #27ae60;
+      --tag-pdf: #e74c3c;
+      --tag-zip: #3498db;
+    }
+    [data-theme="dark"] {
+      --bg: #1a1a2e;
+      --card-bg: #16213e;
+      --text: #e0e0e0;
+      --text-sub: #999;
+      --border: #2a2a4a;
+      --accent: #5dade2;
+      --accent-hover: #3498db;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 20px;
+      min-height: 100vh;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .header h1 {
+      font-size: 22px;
+      font-weight: 600;
+    }
+    .header .info {
+      font-size: 13px;
+      color: var(--text-sub);
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .btn {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: background 0.2s;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-danger {
+      background: var(--danger);
+      color: #fff;
+    }
+    .btn-danger:hover { background: var(--danger-hover); }
+    .btn-sm {
+      padding: 5px 12px;
+      font-size: 12px;
+    }
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .empty {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text-sub);
+    }
+    .empty .icon { font-size: 48px; margin-bottom: 12px; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      transition: box-shadow 0.2s;
+    }
+    .card:hover {
+      box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+    }
+
+    .card-header {
+      padding: 14px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      cursor: pointer;
+    }
+    .card-header:hover { background: rgba(0,0,0,0.02); }
+    [data-theme="dark"] .card-header:hover { background: rgba(255,255,255,0.03); }
+
+    .card-title {
+      font-size: 15px;
+      font-weight: 600;
+      line-height: 1.4;
+      word-break: break-all;
+    }
+    .card-id {
+      font-size: 12px;
+      color: var(--text-sub);
+      margin-top: 4px;
+    }
+
+    .card-tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #fff;
+      text-transform: uppercase;
+      flex-shrink: 0;
+      margin-left: 8px;
+    }
+    .tag-pdf { background: var(--tag-pdf); }
+    .tag-zip { background: var(--tag-zip); }
+
+    .card-meta {
+      padding: 0 16px 10px;
+      display: flex;
+      gap: 16px;
+      font-size: 12px;
+      color: var(--text-sub);
+    }
+    .card-meta span { display: flex; align-items: center; gap: 4px; }
+
+    .card-preview {
+      display: none;
+      padding: 0 16px 14px;
+    }
+    .card-preview.open { display: block; }
+
+    .card-preview img {
+      width: 100%;
+      max-height: 400px;
+      object-fit: contain;
+      border-radius: 6px;
+      background: #f0f0f0;
+    }
+    [data-theme="dark"] .card-preview img { background: #2a2a4a; }
+
+    .card-preview .preview-info {
+      text-align: center;
+      padding: 20px;
+      color: var(--text-sub);
+      font-size: 13px;
+    }
+
+    .card-actions {
+      padding: 0 16px 14px;
+      display: flex;
+      gap: 8px;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      padding: 12px 20px;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 13px;
+      z-index: 9999;
+      animation: fadeIn 0.3s;
+    }
+    .toast-success { background: var(--success); }
+    .toast-error { background: var(--danger); }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>📚 JMComic 缓存管理</h1>
+    <div class="info" id="headerInfo">加载中…</div>
+  </div>
+
+  <div class="toolbar">
+    <button class="btn btn-primary" onclick="loadCache()">🔄 刷新</button>
+  </div>
+
+  <div id="content">
+    <div class="empty"><div class="spinner"></div><p>正在加载…</p></div>
+  </div>
+
+  <script src="/api/plugin/page/bridge-sdk.js"></script>
+  <script>
+    const bridge = window.AstrBotPluginPage;
+    let cacheData = [];
+
+    async function init() {
+      await bridge.ready();
+      await loadCache();
+    }
+
+    async function loadCache() {
+      try {
+        const resp = await bridge.apiGet("cache/list");
+        cacheData = resp.cache || [];
+        render();
+      } catch (e) {
+        document.getElementById("content").innerHTML =
+          `<div class="empty"><div class="icon">❌</div><p>加载失败: ${e.message}</p></div>`;
+      }
+    }
+
+    function formatSize(bytes) {
+      if (bytes === 0) return "0 B";
+      const k = 1024;
+      const sizes = ["B", "KB", "MB", "GB"];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return (bytes / Math.pow(k, i)).toFixed(1) + " " + sizes[i];
+    }
+
+    function render() {
+      const el = document.getElementById("content");
+      const info = document.getElementById("headerInfo");
+
+      if (!cacheData.length) {
+        info.textContent = "共 0 部缓存";
+        el.innerHTML = '<div class="empty"><div class="icon">📭</div><p>当前没有缓存的漫画</p><p style="margin-top:8px;font-size:13px;">使用 <code>/jm ID</code> 下载漫画后会出现在这里</p></div>';
+        return;
+      }
+
+      info.textContent = `共 ${cacheData.length} 部缓存`;
+      el.innerHTML = '<div class="grid">' + cacheData.map((item, idx) => `
+        <div class="card" data-id="${item.comic_id}">
+          <div class="card-header" onclick="togglePreview('${item.comic_id}', ${idx})">
+            <div>
+              <div class="card-title">${escapeHtml(item.title)}</div>
+              <div class="card-id">ID: ${item.comic_id}</div>
+            </div>
+            <span class="card-tag tag-${item.format}">${item.format}</span>
+          </div>
+          <div class="card-meta">
+            <span>${item.file_exists ? '✅ 文件正常' : '❌ 文件丢失'}</span>
+            <span>📁 ${formatSize(item.file_size)}</span>
+            <span>🖼️ ${item.image_count} 张</span>
+          </div>
+          <div class="card-preview" id="preview-${item.comic_id}"></div>
+          <div class="card-actions">
+            <button class="btn btn-primary btn-sm" onclick="downloadFile('${item.comic_id}')">⬇️ 下载</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteComic('${item.comic_id}', '${escapeHtml(item.title)}')">🗑️ 删除</button>
+          </div>
+        </div>
+      `).join("") + "</div>";
+    }
+
+    function escapeHtml(str) {
+      const d = document.createElement("div");
+      d.textContent = str;
+      return d.innerHTML;
+    }
+
+    async function togglePreview(comicId, idx) {
+      const el = document.getElementById("preview-" + comicId);
+      if (el.classList.contains("open")) {
+        el.classList.remove("open");
+        return;
+      }
+      el.classList.add("open");
+      el.innerHTML = '<div class="preview-info"><div class="spinner"></div> 加载预览…</div>';
+
+      try {
+        const resp = await bridge.apiGet("cache/preview", { comic_id: comicId });
+        el.innerHTML = `<img src="${resp.data_url}" alt="preview" />`;
+      } catch (e) {
+        el.innerHTML = `<div class="preview-info">⚠️ 预览加载失败: ${e.message}</div>`;
+      }
+    }
+
+    function downloadFile(comicId) {
+      bridge.download("cache/download", { comic_id: comicId });
+    }
+
+    async function deleteComic(comicId, title) {
+      if (!confirm(`确定要删除「${title}」(ID: ${comicId}) 的缓存吗？`)) return;
+      try {
+        await bridge.apiPost("cache/delete", { comic_id: comicId });
+        toast(`已删除「${title}」`, "success");
+        await loadCache();
+      } catch (e) {
+        toast("删除失败: " + e.message, "error");
+      }
+    }
+
+    function toast(msg, type) {
+      const el = document.createElement("div");
+      el.className = "toast toast-" + type;
+      el.textContent = msg;
+      document.body.appendChild(el);
+      setTimeout(() => el.remove(), 3000);
+    }
+
+    init();
+  </script>
+</body>
+</html>

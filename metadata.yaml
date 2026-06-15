@@ -1,0 +1,5 @@
+name: astrbot_plugin_jmcomic
+display_name: JMComic 漫画下载器
+desc: 通过数字 ID 下载 JMComic 漫画，支持导出 PDF/ZIP，支持缓存管理、代理配置、页数限制等。
+version: v1.0.0
+author: YumemiAI
