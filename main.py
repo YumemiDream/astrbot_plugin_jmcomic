@@ -148,8 +148,9 @@ class JmComicPlugin(Star):
         cached = self._find_in_cache(comic_id)
         if cached and Path(cached["file_path"]).is_file():
             yield event.plain_result(f"📖 从缓存中找到「{album_title}」，直接发送…")
+            safe_name = f"jm_{comic_id}{Path(cached['file_path']).suffix}"
             yield event.chain_result(
-                [Comp.File(file=str(cached["file_path"]), name=Path(cached["file_path"]).name)]
+                [Comp.File(file=str(cached["file_path"]), name=safe_name)]
             )
             return
 
@@ -243,9 +244,10 @@ class JmComicPlugin(Star):
             # ── 8. 更新缓存 ──
             await self._update_cache(comic_id, album_title, file_path)
 
-            # ── 9. 发送文件 ──
+            # ── 9. 发送文件（用安全文件名，避免特殊字符导致QQ传输失败） ──
+            safe_name = f"jm_{comic_id}{Path(file_path).suffix}"
             yield event.chain_result(
-                [Comp.File(file=str(file_path), name=Path(file_path).name)]
+                [Comp.File(file=str(file_path), name=safe_name)]
             )
 
         except Exception as e:
@@ -605,11 +607,12 @@ class JmComicPlugin(Star):
         if not file_path.is_file():
             return jsonify({"error": "file not found on disk"}), 404
 
+        safe_name = f"jm_{comic_id}{file_path.suffix}"
         return await send_file(
             str(file_path),
             mimetype="application/pdf" if file_path.suffix == ".pdf" else "application/zip",
             as_attachment=True,
-            attachment_filename=file_path.name,
+            attachment_filename=safe_name,
         )
 
     # ──────────────────────────── 工具方法 ────────────────────────────
