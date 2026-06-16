@@ -1,4 +1,4 @@
-# JMComic 漫画下载器 AstrBot 插件
+# JMComic 禁漫下载器 AstrBot 插件
 
 通过数字 ID 下载 JMComic 漫画，支持导出为 PDF 或 ZIP 格式并直接发送给用户；同时支持详情查看、封面发送、站内搜索、排行榜、分类浏览等功能。
 
