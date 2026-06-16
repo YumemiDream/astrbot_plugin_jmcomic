@@ -42,5 +42,11 @@
     "type": "bool",
     "default": true,
     "hint": "JMComic 图片经过服务端加密混淆，通常需要开启此选项。关闭则下载原始加密图片。"
+  },
+  "search_result_limit": {
+    "description": "搜索/排行榜每页显示条数",
+    "type": "int",
+    "default": 10,
+    "hint": "单条消息不宜过长，建议 5~20 条。"
   }
 }

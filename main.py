@@ -21,8 +21,8 @@ PLUGIN_NAME = "astrbot_plugin_jmcomic"
 @register(
     PLUGIN_NAME,
     "YumemiAI",
-    "通过数字 ID 下载 JMComic 漫画，支持导出 PDF/ZIP",
-    "1.0.0",
+    "通过数字 ID 下载 JMComic 漫画，支持导出 PDF/ZIP、详情查看、搜索、排行榜、分类浏览",
+    "1.1.0",
 )
 class JmComicPlugin(Star):
     """JMComic 漫画下载器插件"""
@@ -57,6 +57,12 @@ class JmComicPlugin(Star):
             self._api_cache_download,
             ["GET"],
             "下载缓存文件",
+        )
+        context.register_web_api(
+            f"/{PLUGIN_NAME}/detail",
+            self._api_detail,
+            ["GET"],
+            "获取漫画详情",
         )
 
     async def initialize(self):
@@ -263,13 +269,22 @@ class JmComicPlugin(Star):
             "📖 JMComic 漫画下载器 使用说明\n"
             "─────────────────────\n\n"
             "📌 基本指令：\n"
-            "  /jm <漫画ID>  - 下载漫画并发送\n"
-            "  /jmhelp       - 显示本帮助\n"
-            "  /jmcache      - 查看已缓存的漫画\n"
-            "  /jmclear      - 清空所有缓存\n\n"
+            "  /jm <漫画ID>        - 下载漫画并发送\n"
+            "  /jmview <漫画ID>    - 查看漫画详情\n"
+            "  /jmcover <漫画ID>   - 发送漫画封面\n"
+            "  /jmsearch <关键词>  - 站内搜索漫画\n"
+            "  /jmrank <day|week|month> - 查看排行榜\n"
+            "  /jmcategory <分类>  - 按分类浏览漫画\n"
+            "  /jmcache            - 查看已缓存的漫画\n"
+            "  /jmclear            - 清空所有缓存\n"
+            "  /jmhelp             - 显示本帮助\n\n"
             "📌 使用示例：\n"
-            "  /jm 350234    - 下载 ID 为 350234 的漫画\n"
-            "  /jm 12345     - 下载 ID 为 12345 的漫画\n\n"
+            "  /jm 350234          - 下载 ID 为 350234 的漫画\n"
+            "  /jmview 350234      - 查看 ID 为 350234 的漫画详情\n"
+            "  /jmcover 350234     - 发送该漫画封面\n"
+            "  /jmsearch 無修正 2  - 搜索「無修正」，第 2 页\n"
+            "  /jmrank week        - 查看周排行榜\n"
+            "  /jmcategory doujin  - 浏览同人分类\n\n"
             "📌 流程说明：\n"
             "  1. 发送 /jm <ID>\n"
             "  2. 机器人会显示漫画信息和总页数\n"
@@ -278,6 +293,7 @@ class JmComicPlugin(Star):
             "📌 注意事项：\n"
             f"  • 页数限制：最多 {self.config.get('max_pages', 50)} 页\n"
             f"  • 缓存上限：最多保留 {self.config.get('max_cache', 5)} 部漫画\n"
+            f"  • 搜索/排行榜每页最多显示 {self.config.get('search_result_limit', 10)} 条\n"
             "  • 已缓存的漫画会直接发送，无需重新下载\n"
             "  • 下载需要时间，请耐心等待"
         )
@@ -324,6 +340,139 @@ class JmComicPlugin(Star):
         self.cache = []
         await self._save_cache()
         yield event.plain_result(f"🗑️ 已清理 {count} 个缓存文件。")
+
+    # ──────────────────────────── 指令: /jmview ────────────────────────────
+
+    @filter.command("jmview", alias={"jmv"})
+    async def jm_view(self, event: AstrMessageEvent, comic_id: str = ""):
+        """查看 JMComic 漫画详情。用法: /jmview <漫画ID>"""
+        comic_id = self._parse_jm_id(comic_id)
+        if not comic_id:
+            yield event.plain_result("❌ 请提供有效的漫画数字 ID，如：/jmview 350234")
+            return
+
+        try:
+            option = self._build_jm_option()
+            client = option.build_jm_client()
+            album = await self._run_sync(client.get_album_detail, comic_id)
+            text = self._format_album_detail(album)
+            yield event.plain_result(text)
+        except Exception as e:
+            logger.error(f"获取漫画详情失败: {e}", exc_info=True)
+            yield event.plain_result(f"❌ 获取漫画详情失败（ID: {comic_id}）：{e}")
+
+    # ──────────────────────────── 指令: /jmcover ────────────────────────────
+
+    @filter.command("jmcover", alias={"jmc"})
+    async def jm_cover(self, event: AstrMessageEvent, comic_id: str = ""):
+        """发送 JMComic 漫画封面。用法: /jmcover <漫画ID>"""
+        comic_id = self._parse_jm_id(comic_id)
+        if not comic_id:
+            yield event.plain_result("❌ 请提供有效的漫画数字 ID，如：/jmcover 350234")
+            return
+
+        try:
+            option = self._build_jm_option()
+            client = option.build_jm_client()
+            cover_dir = self.download_dir / "covers"
+            cover_dir.mkdir(parents=True, exist_ok=True)
+            cover_path = cover_dir / f"{comic_id}.jpg"
+
+            await self._run_sync(client.download_album_cover, comic_id, str(cover_path))
+
+            if not cover_path.is_file():
+                yield event.plain_result("❌ 封面下载失败。")
+                return
+
+            yield event.chain_result([Comp.Image(file=str(cover_path))])
+        except Exception as e:
+            logger.error(f"下载封面失败: {e}", exc_info=True)
+            yield event.plain_result(f"❌ 下载封面失败（ID: {comic_id}）：{e}")
+
+    # ──────────────────────────── 指令: /jmsearch ────────────────────────────
+
+    @filter.command("jmsearch", alias={"jms"})
+    async def jm_search(self, event: AstrMessageEvent):
+        """站内搜索漫画。用法: /jmsearch <关键词> [页码]"""
+        query, page = self._parse_search_args(event)
+        if not query:
+            yield event.plain_result("❌ 请提供搜索关键词，如：/jmsearch 無修正")
+            return
+
+        try:
+            option = self._build_jm_option()
+            client = option.build_jm_client()
+            result = await self._run_sync(client.search_site, query, page)
+            title = f"🔍 站内搜索「{query}」"
+            text = self._format_page_content(result, title, page)
+            yield event.plain_result(text)
+        except Exception as e:
+            logger.error(f"搜索失败: {e}", exc_info=True)
+            yield event.plain_result(f"❌ 搜索失败：{e}")
+
+    # ──────────────────────────── 指令: /jmrank ────────────────────────────
+
+    @filter.command("jmrank", alias={"jmr"})
+    async def jm_rank(self, event: AstrMessageEvent):
+        """查看 JMComic 排行榜。用法: /jmrank <day|week|month> [页码]"""
+        from jmcomic import JmMagicConstants
+        time_value, page = self._parse_rank_args(event)
+        if time_value is None:
+            yield event.plain_result("❌ 请指定时间范围：day/week/month，如：/jmrank week")
+            return
+
+        try:
+            option = self._build_jm_option()
+            client = option.build_jm_client()
+
+            if time_value == JmMagicConstants.TIME_TODAY:
+                result = await self._run_sync(client.day_ranking, page)
+                label = "日排行"
+            elif time_value == JmMagicConstants.TIME_WEEK:
+                result = await self._run_sync(client.week_ranking, page)
+                label = "周排行"
+            else:
+                result = await self._run_sync(client.month_ranking, page)
+                label = "月排行"
+
+            title = f"🏆 {label}"
+            text = self._format_page_content(result, title, page)
+            yield event.plain_result(text)
+        except Exception as e:
+            logger.error(f"获取排行榜失败: {e}", exc_info=True)
+            yield event.plain_result(f"❌ 获取排行榜失败：{e}")
+
+    # ──────────────────────────── 指令: /jmcategory ────────────────────────────
+
+    @filter.command("jmcategory", alias={"jmcg"})
+    async def jm_category(self, event: AstrMessageEvent):
+        """按分类浏览漫画。用法: /jmcategory <分类> [子分类] [页码]"""
+        from jmcomic import JmMagicConstants
+        category, sub_category, page = self._parse_category_args(event)
+        if not category:
+            yield event.plain_result(
+                "❌ 请提供分类，如：/jmcategory doujin\n"
+                "可选分类：doujin、single、short、hanman、meiman、3D、another、english_site 等"
+            )
+            return
+
+        try:
+            option = self._build_jm_option()
+            client = option.build_jm_client()
+            result = await self._run_sync(
+                client.categories_filter,
+                page,
+                JmMagicConstants.TIME_ALL,
+                category,
+                JmMagicConstants.ORDER_BY_LATEST,
+                sub_category,
+            )
+            title = f"📂 分类「{category}」" + (f" / {sub_category}" if sub_category else "")
+            text = self._format_page_content(result, title, page)
+            yield event.plain_result(text)
+        except Exception as e:
+            logger.error(f"分类浏览失败: {e}", exc_info=True)
+            yield event.plain_result(f"❌ 分类浏览失败：{e}")
 
     # ──────────────────────────── 核心方法 ────────────────────────────
 
@@ -464,6 +613,124 @@ class JmComicPlugin(Star):
         except Exception as e:
             logger.error(f"创建 ZIP 失败: {e}", exc_info=True)
             return None
+
+    # ──────────────────────────── 查询类辅助方法 ────────────────────────────
+
+    async def _run_sync(self, func, *args, **kwargs):
+        """在线程池中执行同步函数，避免阻塞事件循环。"""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
+
+    def _parse_jm_id(self, text: str) -> str | None:
+        """解析 JM 车号，支持纯数字或 JMxxx 形式。"""
+        from jmcomic import JmcomicText
+        try:
+            return JmcomicText.parse_to_jm_id(text.strip())
+        except Exception:
+            return None
+
+    def _strip_command_prefix(self, event: AstrMessageEvent, prefixes: tuple) -> str:
+        """从 message_str 中去除指令前缀，保留参数部分。"""
+        text = event.message_str.strip()
+        for prefix in prefixes:
+            if text.startswith(prefix):
+                return text[len(prefix):].strip()
+        return text
+
+    def _parse_search_args(self, event: AstrMessageEvent) -> tuple[str | None, int]:
+        """解析 /jmsearch 参数：关键词 [页码]。
+
+        当关键词本身为纯数字时（如搜索车号），不会误解析为页码；
+        只有存在两个及以上词组且最后一个为数字时，才视为指定页码。
+        """
+        text = self._strip_command_prefix(event, ("/jmsearch ", "/jms "))
+        if not text:
+            return None, 1
+        parts = text.split()
+        if len(parts) >= 2 and parts[-1].isdigit():
+            page = int(parts[-1])
+            query = " ".join(parts[:-1]).strip()
+        else:
+            page = 1
+            query = text
+        return query or None, page
+
+    def _parse_rank_args(self, event: AstrMessageEvent) -> tuple[str | None, int]:
+        """解析 /jmrank 参数：<day|week|month> [页码]。"""
+        from jmcomic import JmMagicConstants
+        text = self._strip_command_prefix(event, ("/jmrank ", "/jmr "))
+        parts = text.split()
+        if not parts:
+            return None, 1
+        time_map = {
+            "day": JmMagicConstants.TIME_TODAY,
+            "d": JmMagicConstants.TIME_TODAY,
+            "today": JmMagicConstants.TIME_TODAY,
+            "week": JmMagicConstants.TIME_WEEK,
+            "w": JmMagicConstants.TIME_WEEK,
+            "month": JmMagicConstants.TIME_MONTH,
+            "m": JmMagicConstants.TIME_MONTH,
+        }
+        time_key = parts[0].lower()
+        if time_key not in time_map:
+            return None, 1
+        page = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 1
+        return time_map[time_key], page
+
+    def _parse_category_args(self, event: AstrMessageEvent) -> tuple[str | None, str | None, int]:
+        """解析 /jmcategory 参数：<分类> [子分类] [页码]。"""
+        text = self._strip_command_prefix(event, ("/jmcategory ", "/jmcg "))
+        parts = text.split()
+        if not parts:
+            return None, None, 1
+        category = parts[0]
+        sub_category = None
+        page = 1
+        if len(parts) >= 2:
+            if parts[-1].isdigit():
+                page = int(parts[-1])
+                if len(parts) >= 3:
+                    sub_category = parts[1]
+            else:
+                sub_category = parts[1]
+                if len(parts) >= 3 and parts[2].isdigit():
+                    page = int(parts[2])
+        return category, sub_category, page
+
+    def _format_album_detail(self, album) -> str:
+        """将 JmAlbumDetail 格式化为可读文本。"""
+        lines = [
+            f"📖 标题：{album.name}",
+            f"🆔 ID：{album.album_id}",
+            f"✍️ 作者：{', '.join(album.authors) if album.authors else '未知'}",
+            f"📚 作品：{', '.join(album.works) if album.works else '无'}",
+            f"🎭 人物：{', '.join(album.actors) if album.actors else '无'}",
+            f"🏷️ 标签：{', '.join(album.tags) if album.tags else '无'}",
+            f"📄 总页数：{album.page_count}",
+            f"👀 观看：{album.views}  ❤️ 点赞：{album.likes}",
+            f"📅 发布：{album.pub_date}  更新：{album.update_date}",
+            f"📝 章节 ({len(album.episode_list)}):",
+        ]
+        for i, ep in enumerate(album.episode_list[:20], 1):
+            pid = ep[0]
+            pname = ep[2] if len(ep) > 2 else f"第{i}話"
+            lines.append(f"  {i}. {pname} (ID: {pid})")
+        if len(album.episode_list) > 20:
+            lines.append(f"  ... 还有 {len(album.episode_list) - 20} 个章节")
+        return "\n".join(lines)
+
+    def _format_page_content(self, page, title: str, page_no: int) -> str:
+        """将 JmSearchPage / JmCategoryPage 格式化为可读文本。"""
+        limit = self.config.get("search_result_limit", 10)
+        lines = [title, f"📄 第 {page_no}/{page.page_count} 页，本页 {len(page.content)} 条"]
+        for i, (aid, ainfo) in enumerate(page.content[:limit], 1):
+            name = ainfo.get("name", "未知")
+            tags = ainfo.get("tags", [])
+            tag_str = f" | 🏷️ {', '.join(tags[:5])}" if tags else ""
+            lines.append(f"{i}. 「{name}」(ID: {aid}){tag_str}")
+        if len(page.content) > limit:
+            lines.append(f"\n... 本页还有 {len(page.content) - limit} 条，翻页可查看更多")
+        return "\n".join(lines)
 
     # ──────────────────────────── 缓存管理 ────────────────────────────
 
@@ -614,6 +881,48 @@ class JmComicPlugin(Star):
             as_attachment=True,
             attachment_filename=safe_name,
         )
+
+    async def _api_detail(self):
+        """GET /detail?comic_id=xxx — 返回漫画详情。"""
+        comic_id = request.args.get("comic_id", "")
+        if not comic_id:
+            return jsonify({"error": "missing comic_id"}), 400
+
+        target = self._find_in_cache(comic_id)
+        if not target:
+            return jsonify({"error": "comic not found in cache"}), 404
+
+        try:
+            option = self._build_jm_option()
+            client = option.build_jm_client()
+            album = await self._run_sync(client.get_album_detail, comic_id)
+
+            episodes = []
+            for i, ep in enumerate(album.episode_list, 1):
+                pid = ep[0]
+                pname = ep[2] if len(ep) > 2 else f"第{i}話"
+                episodes.append({"index": i, "photo_id": pid, "title": pname})
+
+            return jsonify(
+                {
+                    "comic_id": album.album_id,
+                    "title": album.name,
+                    "description": album.description,
+                    "authors": album.authors,
+                    "works": album.works,
+                    "actors": album.actors,
+                    "tags": album.tags,
+                    "page_count": album.page_count,
+                    "views": album.views,
+                    "likes": album.likes,
+                    "pub_date": album.pub_date,
+                    "update_date": album.update_date,
+                    "episodes": episodes,
+                }
+            )
+        except Exception as e:
+            logger.error(f"获取漫画详情失败: {e}", exc_info=True)
+            return jsonify({"error": f"fetch detail failed: {e}"}), 500
 
     # ──────────────────────────── 工具方法 ────────────────────────────
 

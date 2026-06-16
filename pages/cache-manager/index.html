@@ -157,28 +157,6 @@
     }
     .card-meta span { display: flex; align-items: center; gap: 4px; }
 
-    .card-preview {
-      display: none;
-      padding: 0 16px 14px;
-    }
-    .card-preview.open { display: block; }
-
-    .card-preview img {
-      width: 100%;
-      max-height: 400px;
-      object-fit: contain;
-      border-radius: 6px;
-      background: #f0f0f0;
-    }
-    [data-theme="dark"] .card-preview img { background: #2a2a4a; }
-
-    .card-preview .preview-info {
-      text-align: center;
-      padding: 20px;
-      color: var(--text-sub);
-      font-size: 13px;
-    }
-
     .card-actions {
       padding: 0 16px 14px;
       display: flex;
@@ -195,6 +173,110 @@
       animation: spin 0.6s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.6);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+      padding: 20px;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal-content {
+      background: var(--card-bg);
+      border-radius: 12px;
+      max-width: 900px;
+      width: 100%;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+      border: 1px solid var(--border);
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .modal-header h3 { margin: 0; font-size: 16px; }
+    .modal-body {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 20px;
+      padding: 20px;
+    }
+    @media (max-width: 700px) {
+      .modal-body { grid-template-columns: 1fr; }
+    }
+    .modal-cover img {
+      width: 100%;
+      border-radius: 8px;
+      background: #f0f0f0;
+    }
+    [data-theme="dark"] .modal-cover img { background: #2a2a4a; }
+    .modal-info h2 {
+      margin: 0 0 10px;
+      font-size: 18px;
+      line-height: 1.4;
+    }
+    .modal-meta {
+      color: var(--text-sub);
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+    .modal-tags { margin: 12px 0; }
+    .tag {
+      display: inline-block;
+      background: var(--accent);
+      color: #fff;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      margin: 2px;
+    }
+    .modal-desc {
+      font-size: 13px;
+      color: var(--text-sub);
+      margin: 10px 0;
+      line-height: 1.5;
+    }
+    .modal-episodes { margin-top: 16px; }
+    .modal-episodes strong {
+      display: block;
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+    .episode-list {
+      max-height: 220px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px;
+      font-size: 13px;
+    }
+    .episode-item {
+      padding: 4px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .episode-item:last-child { border-bottom: none; }
+    .close-btn {
+      background: none;
+      border: none;
+      font-size: 24px;
+      cursor: pointer;
+      color: var(--text-sub);
+      line-height: 1;
+    }
+    .close-btn:hover { color: var(--text); }
+    .modal-loading {
+      padding: 40px;
+      text-align: center;
+      color: var(--text-sub);
+    }
 
     .toast {
       position: fixed;
@@ -224,6 +306,16 @@
 
   <div id="content">
     <div class="empty"><div class="spinner"></div><p>正在加载…</p></div>
+  </div>
+
+  <div id="detailModal" class="modal-overlay" onclick="closeDetailOnBackdrop(event)">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>📖 漫画详情</h3>
+        <button class="close-btn" onclick="closeDetail()">&times;</button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+    </div>
   </div>
 
   <script src="/api/plugin/page/bridge-sdk.js"></script>
@@ -268,7 +360,7 @@
       info.textContent = `共 ${cacheData.length} 部缓存`;
       el.innerHTML = '<div class="grid">' + cacheData.map((item, idx) => `
         <div class="card" data-id="${item.comic_id}">
-          <div class="card-header" onclick="togglePreview('${item.comic_id}', ${idx})">
+          <div class="card-header" onclick="openDetail('${item.comic_id}')">
             <div>
               <div class="card-title">${escapeHtml(item.title)}</div>
               <div class="card-id">ID: ${item.comic_id}</div>
@@ -280,7 +372,6 @@
             <span>📁 ${formatSize(item.file_size)}</span>
             <span>🖼️ ${item.image_count} 张</span>
           </div>
-          <div class="card-preview" id="preview-${item.comic_id}"></div>
           <div class="card-actions">
             <button class="btn btn-primary btn-sm" onclick="downloadFile('${item.comic_id}')">⬇️ 下载</button>
             <button class="btn btn-danger btn-sm" onclick="deleteComic('${item.comic_id}', '${escapeHtml(item.title)}')">🗑️ 删除</button>
@@ -295,21 +386,56 @@
       return d.innerHTML;
     }
 
-    async function togglePreview(comicId, idx) {
-      const el = document.getElementById("preview-" + comicId);
-      if (el.classList.contains("open")) {
-        el.classList.remove("open");
-        return;
-      }
-      el.classList.add("open");
-      el.innerHTML = '<div class="preview-info"><div class="spinner"></div> 加载预览…</div>';
+    async function openDetail(comicId) {
+      const modal = document.getElementById("detailModal");
+      const body = document.getElementById("modalBody");
+      modal.classList.add("open");
+      body.innerHTML = '<div class="modal-loading"><div class="spinner"></div><p>加载详情中…</p></div>';
 
       try {
-        const resp = await bridge.apiGet("cache/preview", { comic_id: comicId });
-        el.innerHTML = `<img src="${resp.data_url}" alt="preview" />`;
+        const [detail, preview] = await Promise.all([
+          bridge.apiGet("detail", { comic_id: comicId }),
+          bridge.apiGet("cache/preview", { comic_id: comicId })
+        ]);
+        renderDetail(detail, preview);
       } catch (e) {
-        el.innerHTML = `<div class="preview-info">⚠️ 预览加载失败: ${e.message}</div>`;
+        body.innerHTML = `<div class="modal-loading">⚠️ 加载失败: ${e.message}</div>`;
       }
+    }
+
+    function renderDetail(detail, preview) {
+      const tags = (detail.tags || []).map(t => `<span class="tag">${escapeHtml(t)}</span>`).join("");
+      const episodes = (detail.episodes || []).map(ep =>
+        `<div class="episode-item">${ep.index}. ${escapeHtml(ep.title)} (ID: ${ep.photo_id})</div>`
+      ).join("");
+
+      document.getElementById("modalBody").innerHTML = `
+        <div class="modal-cover">
+          <img src="${preview.data_url}" alt="cover" />
+        </div>
+        <div class="modal-info">
+          <h2>${escapeHtml(detail.title)}</h2>
+          <div class="modal-meta">🆔 ID: ${detail.comic_id} | 📄 ${detail.page_count || '?'} 页 | 👀 ${detail.views || '-'} | ❤️ ${detail.likes || '-'}</div>
+          <div class="modal-meta">📅 发布：${detail.pub_date || '-'} | 更新：${detail.update_date || '-'}</div>
+          <div class="modal-meta">✍️ 作者：${(detail.authors || []).map(escapeHtml).join(", ") || "未知"}</div>
+          <div class="modal-meta">📚 作品：${(detail.works || []).map(escapeHtml).join(", ") || "无"}</div>
+          <div class="modal-meta">🎭 人物：${(detail.actors || []).map(escapeHtml).join(", ") || "无"}</div>
+          ${detail.description ? `<div class="modal-desc">📝 ${escapeHtml(detail.description)}</div>` : ""}
+          <div class="modal-tags">${tags}</div>
+          <div class="modal-episodes">
+            <strong>章节 (${(detail.episodes || []).length})</strong>
+            <div class="episode-list">${episodes || "无章节信息"}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    function closeDetail() {
+      document.getElementById("detailModal").classList.remove("open");
+    }
+
+    function closeDetailOnBackdrop(event) {
+      if (event.target.id === "detailModal") closeDetail();
     }
 
     function downloadFile(comicId) {
