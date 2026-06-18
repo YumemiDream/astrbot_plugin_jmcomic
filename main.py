@@ -1,6 +1,8 @@
 import asyncio
 import base64
 import io
+import json
+import math
 import os
 import shutil
 import zipfile
@@ -32,6 +34,7 @@ class JmComicPlugin(Star):
         self.config = config
         self.cache = []
         self._ensure_download_dir()
+        self._load_cache_sync()
 
         # 注册 Pages 后端 API
         context.register_web_api(
@@ -66,8 +69,8 @@ class JmComicPlugin(Star):
         )
 
     async def initialize(self):
-        """异步初始化：加载缓存索引。"""
-        await self._load_cache()
+        """异步初始化：再次从文件加载缓存索引（兼容 AstrBot 在 __init__ 之后调用）。"""
+        self._load_cache_sync()
 
     # ──────────────────────────── 初始化 ────────────────────────────
 
@@ -83,18 +86,25 @@ class JmComicPlugin(Star):
         self.download_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"JMComic 下载目录: {self.download_dir}")
 
-    async def _load_cache(self):
-        """从 KV 存储加载缓存索引。"""
+    def _load_cache_sync(self):
+        """从本地 JSON 文件同步加载缓存索引。"""
         try:
-            cached = await self.get_kv_data("jm_cache")
-            self.cache = cached if isinstance(cached, list) else []
-        except Exception:
+            cache_file = self.download_dir / "cache_index.json"
+            if cache_file.is_file():
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    cached = json.load(f)
+                self.cache = cached if isinstance(cached, list) else []
+                logger.info(f"已加载 {len(self.cache)} 条缓存记录")
+        except Exception as e:
+            logger.error(f"加载缓存索引失败: {e}")
             self.cache = []
 
     async def _save_cache(self):
-        """持久化缓存索引。"""
+        """持久化缓存索引到本地 JSON 文件。"""
         try:
-            await self.put_kv_data("jm_cache", self.cache)
+            cache_file = self.download_dir / "cache_index.json"
+            with open(cache_file, "w", encoding="utf-8") as f:
+                json.dump(self.cache, f, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.error(f"保存缓存索引失败: {e}")
 
@@ -300,15 +310,24 @@ class JmComicPlugin(Star):
             yield event.plain_result("📭 当前没有缓存的漫画。")
             return
 
-        lines = [f"📚 已缓存 {len(self.cache)} 部漫画：\n"]
+        nodes = [self._build_header_node(event, f"📚 已缓存 {len(self.cache)} 部漫画")]
         for i, item in enumerate(self.cache, 1):
-            exists = "✅" if Path(item["file_path"]).is_file() else "❌"
-            lines.append(
-                f"  {i}. {exists} 「{item['title']}」(ID: {item['comic_id']}) "
-                f"[{item['format'].upper()}]"
+            file_path = Path(item["file_path"])
+            exists = "✅ 文件正常" if file_path.is_file() else "❌ 文件已丢失"
+            album_dir = self.download_dir / item.get("comic_id", "")
+            image_count = len(self._find_image_files(album_dir)) if album_dir.is_dir() else 0
+            file_size = file_path.stat().st_size if file_path.is_file() else 0
+            extra = (
+                f"格式：{item.get('format', '').upper()} | "
+                f"大小：{self._format_size(file_size)} | "
+                f"图片：{image_count} 张 | {exists}"
             )
-        lines.append(f"\n✅ = 文件存在  ❌ = 文件已丢失")
-        yield event.plain_result("\n".join(lines))
+            nodes.append(
+                self._build_result_node(
+                    event, i, item.get("title", "未知"), item.get("comic_id", ""), extra=extra
+                )
+            )
+        yield event.chain_result(nodes)
 
     # ──────────────────────────── 指令: /jmclear ────────────────────────────
 
@@ -397,9 +416,26 @@ class JmComicPlugin(Star):
             option = self._build_jm_option()
             client = option.build_jm_client()
             result = await self._run_sync(client.search_site, query, page)
-            title = f"🔍 站内搜索「{query}」"
-            text = self._format_page_content(result, title, page)
-            yield event.plain_result(text)
+            limit = self.config.get("search_result_limit", 10)
+
+            nodes = [
+                self._build_header_node(
+                    event, f"🔍 站内搜索「{query}」\n📄 第 {page}/{result.page_count} 页，本页 {len(result.content)} 条"
+                )
+            ]
+            for i, (aid, ainfo) in enumerate(result.content[:limit], 1):
+                nodes.append(
+                    self._build_result_node(
+                        event, i, ainfo.get("name", "未知"), aid, ainfo.get("tags", [])
+                    )
+                )
+            if len(result.content) > limit:
+                nodes.append(
+                    self._build_header_node(
+                        event, f"... 本页还有 {len(result.content) - limit} 条，翻页可查看更多"
+                    )
+                )
+            yield event.chain_result(nodes)
         except Exception as e:
             logger.error(f"搜索失败: {e}", exc_info=True)
             yield event.plain_result(f"❌ 搜索失败：{e}")
@@ -429,9 +465,25 @@ class JmComicPlugin(Star):
                 result = await self._run_sync(client.month_ranking, page)
                 label = "月排行"
 
-            title = f"🏆 {label}"
-            text = self._format_page_content(result, title, page)
-            yield event.plain_result(text)
+            limit = self.config.get("search_result_limit", 10)
+            nodes = [
+                self._build_header_node(
+                    event, f"🏆 {label}\n📄 第 {page}/{result.page_count} 页，本页 {len(result.content)} 条"
+                )
+            ]
+            for i, (aid, ainfo) in enumerate(result.content[:limit], 1):
+                nodes.append(
+                    self._build_result_node(
+                        event, i, ainfo.get("name", "未知"), aid, ainfo.get("tags", [])
+                    )
+                )
+            if len(result.content) > limit:
+                nodes.append(
+                    self._build_header_node(
+                        event, f"... 本页还有 {len(result.content) - limit} 条，翻页可查看更多"
+                    )
+                )
+            yield event.chain_result(nodes)
         except Exception as e:
             logger.error(f"获取排行榜失败: {e}", exc_info=True)
             yield event.plain_result(f"❌ 获取排行榜失败：{e}")
@@ -461,9 +513,26 @@ class JmComicPlugin(Star):
                 JmMagicConstants.ORDER_BY_LATEST,
                 sub_category,
             )
-            title = f"📂 分类「{category}」" + (f" / {sub_category}" if sub_category else "")
-            text = self._format_page_content(result, title, page)
-            yield event.plain_result(text)
+            limit = self.config.get("search_result_limit", 10)
+            header = f"📂 分类「{category}」" + (f" / {sub_category}" if sub_category else "")
+            nodes = [
+                self._build_header_node(
+                    event, f"{header}\n📄 第 {page}/{result.page_count} 页，本页 {len(result.content)} 条"
+                )
+            ]
+            for i, (aid, ainfo) in enumerate(result.content[:limit], 1):
+                nodes.append(
+                    self._build_result_node(
+                        event, i, ainfo.get("name", "未知"), aid, ainfo.get("tags", [])
+                    )
+                )
+            if len(result.content) > limit:
+                nodes.append(
+                    self._build_header_node(
+                        event, f"... 本页还有 {len(result.content) - limit} 条，翻页可查看更多"
+                    )
+                )
+            yield event.chain_result(nodes)
         except Exception as e:
             logger.error(f"分类浏览失败: {e}", exc_info=True)
             yield event.plain_result(f"❌ 分类浏览失败：{e}")
@@ -705,8 +774,8 @@ class JmComicPlugin(Star):
             f"🎭 人物：{', '.join(album.actors) if album.actors else '无'}",
             f"🏷️ 标签：{', '.join(album.tags) if album.tags else '无'}",
             f"📄 总页数：{album.page_count}",
-            f"👀 观看：{album.views}  ❤️ 点赞：{album.likes}",
-            f"📅 发布：{album.pub_date}  更新：{album.update_date}",
+            f"👀 观看：{album.views or '-'}  ❤️ 点赞：{album.likes or '-'}",
+            f"📅 发布：{self._format_date(album.pub_date)}  更新：{self._format_date(album.update_date)}",
             f"📝 章节 ({len(album.episode_list)}):",
         ]
         for i, ep in enumerate(album.episode_list[:20], 1):
@@ -749,6 +818,47 @@ class JmComicPlugin(Star):
             logger.warning(f"估算页数失败: {e}")
 
         return 0
+
+    @staticmethod
+    def _format_date(value) -> str:
+        """把禁漫 API 返回的 0/空日期格式化为可读文本。"""
+        if value is None:
+            return "-"
+        s = str(value).strip()
+        if s in ("", "0", "None"):
+            return "-"
+        return s
+
+    @staticmethod
+    def _format_size(bytes_val: int) -> str:
+        """把字节数格式化为可读大小。"""
+        if bytes_val == 0:
+            return "0 B"
+        k = 1024
+        sizes = ["B", "KB", "MB", "GB"]
+        i = int(math.floor(math.log(bytes_val) / math.log(k)))
+        return f"{bytes_val / math.pow(k, i):.1f} {sizes[i]}"
+
+    def _build_result_node(self, event: AstrMessageEvent, index: int, title: str, comic_id: str, tags: list = None, extra: str = "") -> Comp.Node:
+        """构建合并转发消息中的单条结果 Node。"""
+        lines = [f"{index}. {title}", f"ID: {comic_id}"]
+        if tags:
+            lines.append(f"标签：{', '.join(tags[:5])}")
+        if extra:
+            lines.append(extra)
+        return Comp.Node(
+            uin=event.get_self_id() or "0",
+            name="JMComicBot",
+            content=[Comp.Plain("\n".join(lines))],
+        )
+
+    def _build_header_node(self, event: AstrMessageEvent, text: str) -> Comp.Node:
+        """构建合并转发消息中的标题 Node。"""
+        return Comp.Node(
+            uin=event.get_self_id() or "0",
+            name="JMComicBot",
+            content=[Comp.Plain(text)],
+        )
 
     # ──────────────────────────── 缓存管理 ────────────────────────────
 
@@ -935,8 +1045,8 @@ class JmComicPlugin(Star):
                     "page_count": album.page_count,
                     "views": album.views,
                     "likes": album.likes,
-                    "pub_date": album.pub_date,
-                    "update_date": album.update_date,
+                    "pub_date": self._format_date(album.pub_date),
+                    "update_date": self._format_date(album.update_date),
                     "episodes": episodes,
                 }
             )
