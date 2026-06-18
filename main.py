@@ -374,7 +374,7 @@ class JmComicPlugin(Star):
 
     # ──────────────────────────── 指令: /jmcover ────────────────────────────
 
-    @filter.command("jmcover", alias={"jmc"})
+    @filter.command("jmcover", alias={"jmcov"})
     async def jm_cover(self, event: AstrMessageEvent, comic_id: str = ""):
         """发送 JMComic 漫画封面。用法: /jmcover <漫画ID>"""
         comic_id = self._parse_jm_id(comic_id)
