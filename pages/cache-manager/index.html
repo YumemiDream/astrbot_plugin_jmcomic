@@ -408,10 +408,11 @@
       const episodes = (detail.episodes || []).map(ep =>
         `<div class="episode-item">${ep.index}. ${escapeHtml(ep.title)} (ID: ${ep.photo_id})</div>`
       ).join("");
+      const dataUrl = preview && preview.data_url ? preview.data_url : "";
 
       document.getElementById("modalBody").innerHTML = `
         <div class="modal-cover">
-          <img src="${preview.data_url}" alt="cover" />
+          <img id="modalCoverImg" src="" alt="cover" />
         </div>
         <div class="modal-info">
           <h2>${escapeHtml(detail.title)}</h2>
@@ -428,6 +429,12 @@
           </div>
         </div>
       `;
+
+      if (dataUrl) {
+        document.getElementById("modalCoverImg").src = dataUrl;
+      } else {
+        document.getElementById("modalCoverImg").alt = "暂无封面";
+      }
     }
 
     function closeDetail() {

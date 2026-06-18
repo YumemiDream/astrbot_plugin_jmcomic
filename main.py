@@ -125,16 +125,8 @@ class JmComicPlugin(Star):
 
             album_title = album.name or f"漫画 {comic_id}"
 
-            # API 客户端 page_count 永远为 0，通过获取第一个章节的图片数来估算
-            total_pages = 0
-            try:
-                first_photo_id = album.episode_list[0][0]  # (photo_id, index, title)
-                first_photo = client.get_photo_detail(first_photo_id)
-                if first_photo and hasattr(first_photo, 'page_arr') and first_photo.page_arr:
-                    images_per_chapter = len(first_photo.page_arr)
-                    total_pages = images_per_chapter * len(album.episode_list)
-            except Exception:
-                pass  # 获取失败则跳过页数检查
+            # API 客户端 page_count 可能为 0，使用统一方法估算
+            total_pages = self._estimate_page_count(album, client)
 
             logger.info(f"获取到漫画 [{comic_id}] {album_title}，约 {total_pages} 页")
         except Exception as e:
@@ -355,6 +347,8 @@ class JmComicPlugin(Star):
             option = self._build_jm_option()
             client = option.build_jm_client()
             album = await self._run_sync(client.get_album_detail, comic_id)
+            page_count = await self._run_sync(self._estimate_page_count, album, client)
+            album.page_count = page_count
             text = self._format_album_detail(album)
             yield event.plain_result(text)
         except Exception as e:
@@ -392,9 +386,9 @@ class JmComicPlugin(Star):
     # ──────────────────────────── 指令: /jmsearch ────────────────────────────
 
     @filter.command("jmsearch", alias={"jms"})
-    async def jm_search(self, event: AstrMessageEvent):
+    async def jm_search(self, event: AstrMessageEvent, args: str = ""):
         """站内搜索漫画。用法: /jmsearch <关键词> [页码]"""
-        query, page = self._parse_search_args(event)
+        query, page = self._parse_search_args(args)
         if not query:
             yield event.plain_result("❌ 请提供搜索关键词，如：/jmsearch 無修正")
             return
@@ -413,10 +407,10 @@ class JmComicPlugin(Star):
     # ──────────────────────────── 指令: /jmrank ────────────────────────────
 
     @filter.command("jmrank", alias={"jmr"})
-    async def jm_rank(self, event: AstrMessageEvent):
+    async def jm_rank(self, event: AstrMessageEvent, args: str = ""):
         """查看 JMComic 排行榜。用法: /jmrank <day|week|month> [页码]"""
         from jmcomic import JmMagicConstants
-        time_value, page = self._parse_rank_args(event)
+        time_value, page = self._parse_rank_args(args)
         if time_value is None:
             yield event.plain_result("❌ 请指定时间范围：day/week/month，如：/jmrank week")
             return
@@ -445,10 +439,10 @@ class JmComicPlugin(Star):
     # ──────────────────────────── 指令: /jmcategory ────────────────────────────
 
     @filter.command("jmcategory", alias={"jmcg"})
-    async def jm_category(self, event: AstrMessageEvent):
+    async def jm_category(self, event: AstrMessageEvent, args: str = ""):
         """按分类浏览漫画。用法: /jmcategory <分类> [子分类] [页码]"""
         from jmcomic import JmMagicConstants
-        category, sub_category, page = self._parse_category_args(event)
+        category, sub_category, page = self._parse_category_args(args)
         if not category:
             yield event.plain_result(
                 "❌ 请提供分类，如：/jmcategory doujin\n"
@@ -629,21 +623,25 @@ class JmComicPlugin(Star):
         except Exception:
             return None
 
-    def _strip_command_prefix(self, event: AstrMessageEvent, prefixes: tuple) -> str:
-        """从 message_str 中去除指令前缀，保留参数部分。"""
-        text = event.message_str.strip()
+    def _strip_command_prefix(self, source, prefixes: tuple) -> str:
+        """从 message_str 或纯文本中去除指令前缀，保留参数部分。"""
+        if hasattr(source, "message_str"):
+            text = source.message_str
+        else:
+            text = source
+        text = (text or "").strip()
         for prefix in prefixes:
             if text.startswith(prefix):
                 return text[len(prefix):].strip()
         return text
 
-    def _parse_search_args(self, event: AstrMessageEvent) -> tuple[str | None, int]:
+    def _parse_search_args(self, text: str) -> tuple[str | None, int]:
         """解析 /jmsearch 参数：关键词 [页码]。
 
         当关键词本身为纯数字时（如搜索车号），不会误解析为页码；
         只有存在两个及以上词组且最后一个为数字时，才视为指定页码。
         """
-        text = self._strip_command_prefix(event, ("/jmsearch ", "/jms "))
+        text = self._strip_command_prefix(text, ("/jmsearch ", "/jms "))
         if not text:
             return None, 1
         parts = text.split()
@@ -655,10 +653,10 @@ class JmComicPlugin(Star):
             query = text
         return query or None, page
 
-    def _parse_rank_args(self, event: AstrMessageEvent) -> tuple[str | None, int]:
+    def _parse_rank_args(self, text: str) -> tuple[str | None, int]:
         """解析 /jmrank 参数：<day|week|month> [页码]。"""
         from jmcomic import JmMagicConstants
-        text = self._strip_command_prefix(event, ("/jmrank ", "/jmr "))
+        text = self._strip_command_prefix(text, ("/jmrank ", "/jmr "))
         parts = text.split()
         if not parts:
             return None, 1
@@ -677,9 +675,9 @@ class JmComicPlugin(Star):
         page = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 1
         return time_map[time_key], page
 
-    def _parse_category_args(self, event: AstrMessageEvent) -> tuple[str | None, str | None, int]:
+    def _parse_category_args(self, text: str) -> tuple[str | None, str | None, int]:
         """解析 /jmcategory 参数：<分类> [子分类] [页码]。"""
-        text = self._strip_command_prefix(event, ("/jmcategory ", "/jmcg "))
+        text = self._strip_command_prefix(text, ("/jmcategory ", "/jmcg "))
         parts = text.split()
         if not parts:
             return None, None, 1
@@ -731,6 +729,26 @@ class JmComicPlugin(Star):
         if len(page.content) > limit:
             lines.append(f"\n... 本页还有 {len(page.content) - limit} 条，翻页可查看更多")
         return "\n".join(lines)
+
+    def _estimate_page_count(self, album, client) -> int:
+        """API 客户端返回的 page_count 可能为 0，尝试估算真实页数。
+
+        优先使用 album.page_count；若为 0，则获取第一个章节的图片数并按章节数估算。
+        """
+        if album.page_count and int(album.page_count) > 0:
+            return int(album.page_count)
+
+        try:
+            if not album.episode_list:
+                return 0
+            first_photo_id = album.episode_list[0][0]
+            first_photo = client.get_photo_detail(first_photo_id)
+            if first_photo and first_photo.page_arr:
+                return len(first_photo.page_arr) * len(album.episode_list)
+        except Exception as e:
+            logger.warning(f"估算页数失败: {e}")
+
+        return 0
 
     # ──────────────────────────── 缓存管理 ────────────────────────────
 
@@ -896,6 +914,8 @@ class JmComicPlugin(Star):
             option = self._build_jm_option()
             client = option.build_jm_client()
             album = await self._run_sync(client.get_album_detail, comic_id)
+            page_count = await self._run_sync(self._estimate_page_count, album, client)
+            album.page_count = page_count
 
             episodes = []
             for i, ep in enumerate(album.episode_list, 1):
