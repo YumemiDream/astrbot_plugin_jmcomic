@@ -310,24 +310,22 @@ class JmComicPlugin(Star):
             yield event.plain_result("📭 当前没有缓存的漫画。")
             return
 
-        nodes = [self._build_header_node(event, f"📚 已缓存 {len(self.cache)} 部漫画")]
+        texts = [f"📚 已缓存 {len(self.cache)} 部漫画"]
         for i, item in enumerate(self.cache, 1):
             file_path = Path(item["file_path"])
             exists = "✅ 文件正常" if file_path.is_file() else "❌ 文件已丢失"
             album_dir = self.download_dir / item.get("comic_id", "")
             image_count = len(self._find_image_files(album_dir)) if album_dir.is_dir() else 0
             file_size = file_path.stat().st_size if file_path.is_file() else 0
-            extra = (
+            item_lines = [
+                f"{i}. {item.get('title', '未知')}",
+                f"ID: {item.get('comic_id', '')}",
                 f"格式：{item.get('format', '').upper()} | "
                 f"大小：{self._format_size(file_size)} | "
-                f"图片：{image_count} 张 | {exists}"
-            )
-            nodes.append(
-                self._build_result_node(
-                    event, i, item.get("title", "未知"), item.get("comic_id", ""), extra=extra
-                )
-            )
-        yield event.chain_result(nodes)
+                f"图片：{image_count} 张 | {exists}",
+            ]
+            texts.append("\n".join(item_lines))
+        yield event.chain_result([self._build_merged_node(event, texts)])
 
     # ──────────────────────────── 指令: /jmclear ────────────────────────────
 
@@ -418,24 +416,18 @@ class JmComicPlugin(Star):
             result = await self._run_sync(client.search_site, query, page)
             limit = self.config.get("search_result_limit", 10)
 
-            nodes = [
-                self._build_header_node(
-                    event, f"🔍 站内搜索「{query}」\n📄 第 {page}/{result.page_count} 页，本页 {len(result.content)} 条"
-                )
+            texts = [
+                f"🔍 站内搜索「{query}」\n📄 第 {page}/{result.page_count} 页，本页 {len(result.content)} 条",
             ]
             for i, (aid, ainfo) in enumerate(result.content[:limit], 1):
-                nodes.append(
-                    self._build_result_node(
-                        event, i, ainfo.get("name", "未知"), aid, ainfo.get("tags", [])
-                    )
-                )
+                item_lines = [f"{i}. {ainfo.get('name', '未知')}", f"ID: {aid}"]
+                tags = ainfo.get("tags", [])
+                if tags:
+                    item_lines.append(f"标签：{', '.join(tags[:5])}")
+                texts.append("\n".join(item_lines))
             if len(result.content) > limit:
-                nodes.append(
-                    self._build_header_node(
-                        event, f"... 本页还有 {len(result.content) - limit} 条，翻页可查看更多"
-                    )
-                )
-            yield event.chain_result(nodes)
+                texts.append(f"... 本页还有 {len(result.content) - limit} 条，翻页可查看更多")
+            yield event.chain_result([self._build_merged_node(event, texts)])
         except Exception as e:
             logger.error(f"搜索失败: {e}", exc_info=True)
             yield event.plain_result(f"❌ 搜索失败：{e}")
@@ -466,24 +458,18 @@ class JmComicPlugin(Star):
                 label = "月排行"
 
             limit = self.config.get("search_result_limit", 10)
-            nodes = [
-                self._build_header_node(
-                    event, f"🏆 {label}\n📄 第 {page}/{result.page_count} 页，本页 {len(result.content)} 条"
-                )
+            texts = [
+                f"🏆 {label}\n📄 第 {page}/{result.page_count} 页，本页 {len(result.content)} 条",
             ]
             for i, (aid, ainfo) in enumerate(result.content[:limit], 1):
-                nodes.append(
-                    self._build_result_node(
-                        event, i, ainfo.get("name", "未知"), aid, ainfo.get("tags", [])
-                    )
-                )
+                item_lines = [f"{i}. {ainfo.get('name', '未知')}", f"ID: {aid}"]
+                tags = ainfo.get("tags", [])
+                if tags:
+                    item_lines.append(f"标签：{', '.join(tags[:5])}")
+                texts.append("\n".join(item_lines))
             if len(result.content) > limit:
-                nodes.append(
-                    self._build_header_node(
-                        event, f"... 本页还有 {len(result.content) - limit} 条，翻页可查看更多"
-                    )
-                )
-            yield event.chain_result(nodes)
+                texts.append(f"... 本页还有 {len(result.content) - limit} 条，翻页可查看更多")
+            yield event.chain_result([self._build_merged_node(event, texts)])
         except Exception as e:
             logger.error(f"获取排行榜失败: {e}", exc_info=True)
             yield event.plain_result(f"❌ 获取排行榜失败：{e}")
@@ -515,24 +501,18 @@ class JmComicPlugin(Star):
             )
             limit = self.config.get("search_result_limit", 10)
             header = f"📂 分类「{category}」" + (f" / {sub_category}" if sub_category else "")
-            nodes = [
-                self._build_header_node(
-                    event, f"{header}\n📄 第 {page}/{result.page_count} 页，本页 {len(result.content)} 条"
-                )
+            texts = [
+                f"{header}\n📄 第 {page}/{result.page_count} 页，本页 {len(result.content)} 条",
             ]
             for i, (aid, ainfo) in enumerate(result.content[:limit], 1):
-                nodes.append(
-                    self._build_result_node(
-                        event, i, ainfo.get("name", "未知"), aid, ainfo.get("tags", [])
-                    )
-                )
+                item_lines = [f"{i}. {ainfo.get('name', '未知')}", f"ID: {aid}"]
+                tags = ainfo.get("tags", [])
+                if tags:
+                    item_lines.append(f"标签：{', '.join(tags[:5])}")
+                texts.append("\n".join(item_lines))
             if len(result.content) > limit:
-                nodes.append(
-                    self._build_header_node(
-                        event, f"... 本页还有 {len(result.content) - limit} 条，翻页可查看更多"
-                    )
-                )
-            yield event.chain_result(nodes)
+                texts.append(f"... 本页还有 {len(result.content) - limit} 条，翻页可查看更多")
+            yield event.chain_result([self._build_merged_node(event, texts)])
         except Exception as e:
             logger.error(f"分类浏览失败: {e}", exc_info=True)
             yield event.plain_result(f"❌ 分类浏览失败：{e}")
@@ -839,25 +819,13 @@ class JmComicPlugin(Star):
         i = int(math.floor(math.log(bytes_val) / math.log(k)))
         return f"{bytes_val / math.pow(k, i):.1f} {sizes[i]}"
 
-    def _build_result_node(self, event: AstrMessageEvent, index: int, title: str, comic_id: str, tags: list = None, extra: str = "") -> Comp.Node:
-        """构建合并转发消息中的单条结果 Node。"""
-        lines = [f"{index}. {title}", f"ID: {comic_id}"]
-        if tags:
-            lines.append(f"标签：{', '.join(tags[:5])}")
-        if extra:
-            lines.append(extra)
+    def _build_merged_node(self, event: AstrMessageEvent, texts: list) -> Comp.Node:
+        """构建一个合并转发 Node，内含多条 Plain 消息，QQ 中显示为一个转发气泡。"""
+        content = [Comp.Plain(t) for t in texts]
         return Comp.Node(
             uin=event.get_self_id() or "0",
             name="JMComicBot",
-            content=[Comp.Plain("\n".join(lines))],
-        )
-
-    def _build_header_node(self, event: AstrMessageEvent, text: str) -> Comp.Node:
-        """构建合并转发消息中的标题 Node。"""
-        return Comp.Node(
-            uin=event.get_self_id() or "0",
-            name="JMComicBot",
-            content=[Comp.Plain(text)],
+            content=content,
         )
 
     # ──────────────────────────── 缓存管理 ────────────────────────────
